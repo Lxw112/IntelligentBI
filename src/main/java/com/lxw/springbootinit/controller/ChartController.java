@@ -10,27 +10,32 @@ import com.lxw.springbootinit.common.DeleteRequest;
 import com.lxw.springbootinit.common.ErrorCode;
 import com.lxw.springbootinit.common.ResultUtils;
 import com.lxw.springbootinit.constant.CommonConstant;
+import com.lxw.springbootinit.constant.FileConstant;
 import com.lxw.springbootinit.constant.UserConstant;
 import com.lxw.springbootinit.exception.BusinessException;
 import com.lxw.springbootinit.exception.ThrowUtils;
-import com.lxw.springbootinit.model.dto.chart.ChartAddRequest;
-import com.lxw.springbootinit.model.dto.chart.ChartEditRequest;
-import com.lxw.springbootinit.model.dto.chart.ChartQueryRequest;
-import com.lxw.springbootinit.model.dto.chart.ChartUpdateRequest;
+import com.lxw.springbootinit.model.dto.chart.*;
+import com.lxw.springbootinit.model.dto.file.UploadFileRequest;
 import com.lxw.springbootinit.model.entity.Chart;
 import com.lxw.springbootinit.model.entity.User;
+import com.lxw.springbootinit.model.enums.FileUploadBizEnum;
 import com.lxw.springbootinit.service.ChartService;
 import com.lxw.springbootinit.service.UserService;
+import com.lxw.springbootinit.utils.ExcelUtils;
 import com.lxw.springbootinit.utils.SqlUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
 
+import org.apache.commons.lang3.ThreadUtils;
 import org.springframework.beans.BeanUtils;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
+import java.io.File;
 import java.util.List;
 
 /**
@@ -214,6 +219,54 @@ public class ChartController {
         return ResultUtils.success(result);
     }
 
+
+    /**
+     * 智能分析
+     * @param multipartFile
+     * @param genChartByAiRequest
+     * @param request
+     * @return
+     */
+    @PostMapping("/gen")
+    public BaseResponse<String> genChartByAi(@RequestPart("file") MultipartFile multipartFile,
+                                             GenChartByAiRequest genChartByAiRequest, HttpServletRequest request) {
+        String name = genChartByAiRequest.getName();
+        String chartType = genChartByAiRequest.getChartType();
+        String goal = genChartByAiRequest.getGoal();
+        //校验
+        ThrowUtils.throwIf(StringUtils.isBlank(goal), ErrorCode.PARAMS_ERROR, "目标为空");
+        ThrowUtils.throwIf(StringUtils.isNotBlank(name) && name.length() > 100, ErrorCode.PARAMS_ERROR, "名称过长");
+        //用户输入
+        StringBuilder userInput = new StringBuilder();
+        userInput.append("你是一个数据分析师，接下来我会给你我的分析目标和原始数据，请告诉我分析结论。").append("\n");
+        userInput.append("分析目标:").append(goal).append("\n");
+        //压缩后的数据
+        String result = ExcelUtils.excelToEsv(multipartFile);
+        userInput.append("数据:").append(result).append("\n");
+        return ResultUtils.success(userInput.toString());
+        //读取到用户上传的Excel文件，进行一个处理
+//        User loginUser = userService.getLoginUser(request);
+//        // 文件目录：根据业务、用户来划分
+//        String uuid = RandomStringUtils.randomAlphanumeric(8);
+//        String filename = uuid + "-" + multipartFile.getOriginalFilename();
+//        File file = null;
+//        try {
+//
+//            // 返回可访问地址
+//            return ResultUtils.success("");
+//        } catch (Exception e) {
+//            //log.error("file upload error, filepath = " + filepath, e);
+//            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "上传失败");
+//        } finally {
+//            if (file != null) {
+//                // 删除临时文件
+//                boolean delete = file.delete();
+//                if (!delete) {
+//                    //log.error("file delete error, filepath = {}", filepath);
+//                }
+//            }
+//        }
+    }
     /**
      * 获取查询包装类
      *
@@ -226,6 +279,7 @@ public class ChartController {
             return queryWrapper;
         }
         Long id = chartQueryRequest.getId();
+        String name = chartQueryRequest.getName();
         String goal = chartQueryRequest.getGoal();
         String chartType = chartQueryRequest.getChartType();
         Long userId = chartQueryRequest.getUserId();
@@ -233,6 +287,7 @@ public class ChartController {
         String sortOrder = chartQueryRequest.getSortOrder();
 
         queryWrapper.eq(id != null && id > 0, "id", id);
+        queryWrapper.like(StringUtils.isNotBlank(name), "name", name);
         queryWrapper.eq(StringUtils.isNotBlank(goal), "goal", goal);
         queryWrapper.eq(StringUtils.isNotBlank(chartType), "chartType", chartType);
         queryWrapper.eq(ObjectUtils.isNotEmpty(userId), "userId", userId);
