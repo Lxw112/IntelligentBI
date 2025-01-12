@@ -106,6 +106,6 @@ knife4j:
 xun-fei:
   client:
     appId: 1f3613bf
-    apiSecret: ODY5MGJjYWUzYjliYzg2NmM4NGZlOTU0
-    apiKey: 9c916429b18f9897de6535e4a61ad1b8
+    ##apiSecret: 换成自己的密钥
+    ##apiKey: 换成自己的key
 
