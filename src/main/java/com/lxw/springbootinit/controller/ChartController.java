@@ -14,11 +14,13 @@ import com.lxw.springbootinit.constant.FileConstant;
 import com.lxw.springbootinit.constant.UserConstant;
 import com.lxw.springbootinit.exception.BusinessException;
 import com.lxw.springbootinit.exception.ThrowUtils;
+import com.lxw.springbootinit.manager.AiManager;
 import com.lxw.springbootinit.model.dto.chart.*;
 import com.lxw.springbootinit.model.dto.file.UploadFileRequest;
 import com.lxw.springbootinit.model.entity.Chart;
 import com.lxw.springbootinit.model.entity.User;
 import com.lxw.springbootinit.model.enums.FileUploadBizEnum;
+import com.lxw.springbootinit.model.vo.BiResponse;
 import com.lxw.springbootinit.service.ChartService;
 import com.lxw.springbootinit.service.UserService;
 import com.lxw.springbootinit.utils.ExcelUtils;
@@ -55,6 +57,9 @@ public class ChartController {
 
     @Resource
     private UserService userService;
+
+    @Resource
+    private AiManager aiManager;
 
     private final static Gson GSON = new Gson();
 
@@ -228,7 +233,7 @@ public class ChartController {
      * @return
      */
     @PostMapping("/gen")
-    public BaseResponse<String> genChartByAi(@RequestPart("file") MultipartFile multipartFile,
+    public BaseResponse<BiResponse> genChartByAi(@RequestPart("file") MultipartFile multipartFile,
                                              GenChartByAiRequest genChartByAiRequest, HttpServletRequest request) {
         String name = genChartByAiRequest.getName();
         String chartType = genChartByAiRequest.getChartType();
@@ -236,36 +241,64 @@ public class ChartController {
         //校验
         ThrowUtils.throwIf(StringUtils.isBlank(goal), ErrorCode.PARAMS_ERROR, "目标为空");
         ThrowUtils.throwIf(StringUtils.isNotBlank(name) && name.length() > 100, ErrorCode.PARAMS_ERROR, "名称过长");
-        //用户输入
+        User loginUser = userService.getLoginUser(request);
+        //无需写prompt，直接调用现有模型
+//        final String prompt = "你是一个数据分析师和前端开发专家，接下来我会按照以下固定格式给你提供内容：\n" +
+//                "分析需求：\n" +
+//                "{数据分析的需求或者目标}\n" +
+//                "原始数据：\n" +
+//                "{csv格式的原始数据，用,作为分隔符}\n" +
+//                "请根据这两部分内容，严格按照以下指定格式生成内容（此外不要输出任何多余的开头、结尾、注释）同时不要使用这个符号 '】'\n" +
+//                "'【【【【【'\n" +
+//                "{前端 Echarts V5 的 option 配置对象 JSON 代码, 不要生成任何多余的内容，比如注释和代码块标记}\n" +
+//                "'【【【【【'\n" +
+//                "{明确的数据分析结论、越详细越好，不要生成多余的注释} \n" +
+//                "下面是一个具体的例子的模板：\n" +
+//                "'【【【【【'\n" +
+//                "JSON格式代码\n" +
+//                "'【【【【【'\n" +
+//                "结论：\n";
+
+        //构造用户输入
         StringBuilder userInput = new StringBuilder();
-        userInput.append("你是一个数据分析师，接下来我会给你我的分析目标和原始数据，请告诉我分析结论。").append("\n");
-        userInput.append("分析目标:").append(goal).append("\n");
+        userInput.append("分析需求：").append("\n");
+        //拼接分析目标
+        String userGoal = goal;
+        if (StringUtils.isNotBlank(chartType)){
+            userGoal += ", 请使用" + chartType;
+        }
+        userInput.append(userGoal).append("\n");
+        userInput.append("原始数据：").append("\n");
         //压缩后的数据
-        String result = ExcelUtils.excelToEsv(multipartFile);
-        userInput.append("数据:").append(result).append("\n");
-        return ResultUtils.success(userInput.toString());
-        //读取到用户上传的Excel文件，进行一个处理
-//        User loginUser = userService.getLoginUser(request);
-//        // 文件目录：根据业务、用户来划分
-//        String uuid = RandomStringUtils.randomAlphanumeric(8);
-//        String filename = uuid + "-" + multipartFile.getOriginalFilename();
-//        File file = null;
-//        try {
-//
-//            // 返回可访问地址
-//            return ResultUtils.success("");
-//        } catch (Exception e) {
-//            //log.error("file upload error, filepath = " + filepath, e);
-//            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "上传失败");
-//        } finally {
-//            if (file != null) {
-//                // 删除临时文件
-//                boolean delete = file.delete();
-//                if (!delete) {
-//                    //log.error("file delete error, filepath = {}", filepath);
-//                }
-//            }
-//        }
+        String csvData = ExcelUtils.excelToEsv(multipartFile);
+        userInput.append(csvData).append("\n");
+        String result = aiManager.sendMsgToXingHuo(true, userInput.toString());
+        System.out.println("----Ai返回的结果是---"+result);
+        String[] splits = result.split("'【【【【【'");
+        if (splits.length < 3){
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR,"AI生成错误");
+        }
+        String genChart = splits[1].trim();
+        System.out.println("----图表信息----");
+        System.out.println(genChart);
+        String genResult = splits[2].trim();
+        //插入到数据库
+        Chart chart = new Chart();
+        chart.setName(name);
+        chart.setGoal(goal);
+        chart.setChartData(csvData);
+        chart.setChartType(chartType);
+        chart.setGenChart(genChart);
+        chart.setGenResult(genResult);
+        chart.setUserId(loginUser.getId());
+        boolean saveResult = chartService.save(chart);
+        ThrowUtils.throwIf(!saveResult,ErrorCode.SYSTEM_ERROR,"图表保存失败");
+        BiResponse biResponse = new BiResponse();
+        biResponse.setGenChart(genChart);
+        biResponse.setGenResult(genResult);
+        biResponse.setChartId(chart.getId());
+        return ResultUtils.success(biResponse);
+
     }
     /**
      * 获取查询包装类

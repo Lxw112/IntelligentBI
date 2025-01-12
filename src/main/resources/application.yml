@@ -61,6 +61,7 @@ mybatis-plus:
       logic-delete-field: isDelete # 全局逻辑删除的实体字段名
       logic-delete-value: 1 # 逻辑已删除值（默认为 1）
       logic-not-delete-value: 0 # 逻辑未删除值（默认为 0）
+
 # 微信相关
 wx:
   # 微信公众平台
@@ -101,3 +102,10 @@ knife4j:
         api-rule: package
         api-rule-resources:
           - com.lxw.springbootinit.controller
+## 讯飞 AI 配置
+xun-fei:
+  client:
+    appId: 1f3613bf
+    apiSecret: ODY5MGJjYWUzYjliYzg2NmM4NGZlOTU0
+    apiKey: 9c916429b18f9897de6535e4a61ad1b8
+
