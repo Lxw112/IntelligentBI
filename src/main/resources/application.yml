@@ -103,6 +103,11 @@ knife4j:
         api-rule-resources:
           - com.lxw.springbootinit.controller
 ## 讯飞 AI 配置
-##写成自己的
+xun-fei:
+  client:
+    appId: 1f3613bf
+    apiSecret: ODY5MGJjYWUzYjliYzg2NmM4NGZlOTU0
+    apiKey: 9c916429b18f9897de6535e4a61ad1b8
+
 
 

@@ -27,7 +27,7 @@ public class ExcelUtils {
      * @param multipartFile
      * @return
      */
-    public static String excelToEsv(MultipartFile multipartFile)  {
+    public static String excelToCsv(MultipartFile multipartFile)  {
 //File file = null;
 //        try {
 //            file = ResourceUtils.getFile("classpath:网站数据.xlsx");
@@ -66,6 +66,6 @@ public class ExcelUtils {
     }
 
     public static void main(String[] args){
-        excelToEsv(null);
+        excelToCsv(null);
     }
 }
