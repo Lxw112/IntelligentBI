@@ -1,6 +1,11 @@
 package com.lxw.springbootinit.controller;
 
 import cn.hutool.core.io.FileUtil;
+
+import cn.hutool.core.lang.TypeReference;
+import cn.hutool.json.JSONUtil;
+
+
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.google.gson.Gson;
@@ -13,6 +18,7 @@ import com.lxw.springbootinit.common.ErrorCode;
 import com.lxw.springbootinit.common.ResultUtils;
 import com.lxw.springbootinit.constant.CommonConstant;
 import com.lxw.springbootinit.constant.FileConstant;
+import com.lxw.springbootinit.constant.RedisConstants;
 import com.lxw.springbootinit.constant.UserConstant;
 import com.lxw.springbootinit.exception.BusinessException;
 import com.lxw.springbootinit.exception.ThrowUtils;
@@ -35,16 +41,24 @@ import org.apache.commons.lang3.StringUtils;
 
 import org.apache.commons.lang3.ThreadUtils;
 import org.springframework.beans.BeanUtils;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.ScanOptions;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 帖子接口
@@ -76,7 +90,10 @@ public class ChartController {
     @Resource
     private BiMessageProducer biMessageProducer;
 
-    private final static Gson GSON = new Gson();
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    public static String userId;
 
     // region 增删改查
 
@@ -181,8 +198,10 @@ public class ChartController {
         long size = chartQueryRequest.getPageSize();
         // 限制爬虫
         ThrowUtils.throwIf(size > 20, ErrorCode.PARAMS_ERROR);
+
         Page<Chart> chartPage = chartService.page(new Page<>(current, size),
                 getQueryWrapper(chartQueryRequest));
+
         return ResultUtils.success(chartPage);
     }
 
@@ -205,8 +224,22 @@ public class ChartController {
         long size = chartQueryRequest.getPageSize();
         // 限制爬虫
         ThrowUtils.throwIf(size > 20, ErrorCode.PARAMS_ERROR);
+        //生成redis缓存key
+        String cacheKey = RedisConstants.CACHE_CHARTS + loginUser.getId() + RedisConstants.CACHE_PAGE + current + RedisConstants.CACHE_SIZE + size;
+        //尝试从redis缓存中获取数据
+        String cachedData = stringRedisTemplate.opsForValue().get(cacheKey);
+        //如果缓存中有数据，直接返回
+        if (cachedData != null) {
+            // 将缓存的 JSON 字符串反序列化为 Page<Chart> 对象
+            Page<Chart> chartPage = JSONUtil.toBean(cachedData, new TypeReference<>() {},false);
+            log.info("从缓存中查到的，{}",chartPage);
+            return ResultUtils.success(chartPage);
+        }
         Page<Chart> chartPage = chartService.page(new Page<>(current, size),
                 getQueryWrapper(chartQueryRequest));
+        // 将查询结果存入缓存，缓存时间可以根据需求设置
+        stringRedisTemplate.opsForValue().set(cacheKey, JSONUtil.toJsonStr(chartPage), 30, TimeUnit.MINUTES);
+
         return ResultUtils.success(chartPage);
     }
 
@@ -322,6 +355,8 @@ public class ChartController {
         chart.setGenResult(genResult);
         chart.setUserId(loginUser.getId());
         boolean saveResult = chartService.save(chart);
+        //删除缓存
+        deleteUserCache(loginUser.getId().toString());
         ThrowUtils.throwIf(!saveResult, ErrorCode.SYSTEM_ERROR, "图表保存失败");
         BiResponse biResponse = new BiResponse();
         biResponse.setGenChart(genChart);
@@ -429,6 +464,8 @@ public class ChartController {
             // todo 定义状态枚举
             updateChartResult.setStatus("succeed");
             boolean updateResult = chartService.updateById(updateChartResult);
+            //删除缓存
+            deleteUserCache(loginUser.getId().toString());
             if (!updateResult) {
                 handleChartUpdateError(chart.getId(),"更新图表成功状态失败");
             }
@@ -495,9 +532,12 @@ public class ChartController {
         chart.setStatus("wait");
         chart.setUserId(loginUser.getId());
         boolean saveResult = chartService.save(chart);
+        //删除缓存
+        deleteUserCache(loginUser.getId().toString());
         ThrowUtils.throwIf(!saveResult,ErrorCode.SYSTEM_ERROR,"图表保存失败");
         Long newChartId = chart.getId();
         //发送到消息队列
+        userId = loginUser.getId().toString();
         biMessageProducer.sendMessage(String.valueOf(newChartId));
         BiResponse biResponse = new BiResponse();
         biResponse.setChartId(newChartId);
@@ -544,5 +584,24 @@ public class ChartController {
         return queryWrapper;
     }
 
+    public void deleteUserCache(String userId) {
+        String keyPattern = RedisConstants.CACHE_CHARTS + userId + "*";
+        // 使用 scan 获取匹配的 keys
+        Set<String> keys = stringRedisTemplate.execute((RedisCallback<Set<String>>) connection -> {
+            Set<String> matchingKeys = new HashSet<>();
+            Cursor<byte[]> cursor = connection.scan(
+                    ScanOptions.scanOptions().match(keyPattern).count(1000).build()
+            );
+            while (cursor.hasNext()) {
+                matchingKeys.add(new String(cursor.next(), StandardCharsets.UTF_8));
+            }
+            return matchingKeys;
+        });
+
+        // 删除所有匹配的 keys
+        if (keys != null && !keys.isEmpty()) {
+            stringRedisTemplate.delete(keys);
+        }
+    }
 
 }
