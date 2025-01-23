@@ -339,7 +339,7 @@ public class ChartController {
         userInput.append(csvData).append("\n");
 
         String result = aiManager.sendMsgToXingHuo(true, userInput.toString());
-        String[] splits = result.split("'【【【【【'");
+        String[] splits = result.split("'-----'");
         if (splits.length < 3) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "AI 生成错误");
         }
@@ -354,6 +354,7 @@ public class ChartController {
         chart.setGenChart(genChart);
         chart.setGenResult(genResult);
         chart.setUserId(loginUser.getId());
+        chart.setStatus(CommonConstant.UPDATE_CHART_SUCCESS);
         boolean saveResult = chartService.save(chart);
         //删除缓存
         deleteUserCache(loginUser.getId().toString());
@@ -448,7 +449,7 @@ public class ChartController {
             //调用Ai
             String result = aiManager.sendMsgToXingHuo(true, userInput.toString());
             System.out.println("----Ai返回的结果是---"+result);
-            String[] splits = result.split("'【【【【【'");
+            String[] splits = result.split("'-----'");
             if (splits.length < 3){
                 handleChartUpdateError(chart.getId(),"AI生成错误");
                 return;

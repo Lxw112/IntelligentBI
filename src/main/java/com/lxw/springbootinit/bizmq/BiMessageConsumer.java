@@ -79,7 +79,7 @@ public class BiMessageConsumer {
         //调用Ai
         String result = aiManager.sendMsgToXingHuo(true, buildUserInput(chart));
         System.out.println("----Ai返回的结果是---"+result);
-        String[] splits = result.split("'【【【【【'");
+        String[] splits = result.split("'-----'");
         if (splits.length < 3){
             try {
                 channel.basicNack(deliveryTag,false,false);

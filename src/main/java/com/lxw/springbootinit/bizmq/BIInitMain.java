@@ -21,7 +21,7 @@ public class BIInitMain {
             Connection connection = factory.newConnection();
             Channel channel = connection.createChannel();
             //声明死信交换机和死信队列
-            channel.exchangeDeclare(BiMqConstant.BI_DEAD_EXCHANGE_NAME,"direct");
+            channel.exchangeDeclare(BiMqConstant.BI_DEAD_EXCHANGE_NAME,"direct",true);
             channel.queueDeclare(BiMqConstant.BI_DEAD_QUEUE_NAME,true,false,false,null);
             channel.queueBind(BiMqConstant.BI_DEAD_QUEUE_NAME,BiMqConstant.BI_DEAD_EXCHANGE_NAME,BiMqConstant.BI_DEAD_ROUTING_KEY);
             //指定死信队列参数
@@ -31,7 +31,7 @@ public class BIInitMain {
             //指定死信要转发到哪个死信队列
             args.put("x-dead-letter-routing-key", BiMqConstant.BI_DEAD_ROUTING_KEY);
             //声明工作交换机和队列
-            channel.exchangeDeclare(BiMqConstant.BI_EXCHANGE_NAME, "direct");
+            channel.exchangeDeclare(BiMqConstant.BI_EXCHANGE_NAME, "direct",true);
             channel.queueDeclare(BiMqConstant.BI_QUEUE_NAME, true, false, false, args);
             channel.queueBind(BiMqConstant.BI_QUEUE_NAME, BiMqConstant.BI_EXCHANGE_NAME, BiMqConstant.BI_ROUTING_KEY);
         } catch (Exception e) {
