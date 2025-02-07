@@ -15,9 +15,11 @@ public class BIInitMain {
     public static void main(String[] argv){
         try {
             ConnectionFactory factory = new ConnectionFactory();
-            factory.setHost("192.168.182.128");
-            factory.setUsername("itheima");
-            factory.setPassword("123321");
+            factory.setHost("1.15.229.51");
+            factory.setUsername("admin");
+            factory.setPassword("123456");
+            factory.setAutomaticRecoveryEnabled(true); // 开启自动重连
+            factory.setNetworkRecoveryInterval(5000); // 重连间隔 5 秒
             Connection connection = factory.newConnection();
             Channel channel = connection.createChannel();
             //声明死信交换机和死信队列

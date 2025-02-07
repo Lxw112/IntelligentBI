@@ -20,7 +20,11 @@ import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.handler.annotation.Header;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Recover;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.io.IOException;
@@ -45,79 +49,97 @@ public class BiMessageConsumer {
         log.info("receive message: {}",message);
         if (StringUtils.isBlank(message)){
             //消息拒绝
-            try {
-                channel.basicNack(deliveryTag,false,false);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
+            rejectMessage(channel, deliveryTag);
             throw new BusinessException(ErrorCode.SYSTEM_ERROR,"消息为空");
         }
         //先修改图表任务状态为”执行中“，等执行成功后，修改为”已完成“、保存图表结果；
         // 执行失败后，状态修改为”失败“，记录任务失败信息
-        Chart updateChart = new Chart();
-        Chart chart = chartService.getById(message);
-        if (chart == null){
-            try {
-                channel.basicNack(deliveryTag,false,false);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR,"图表为空");
-        }
-        updateChart.setId(chart.getId());
-        updateChart.setStatus("running");
-        boolean b = chartService.updateById(updateChart);
-        if (!b) {
-            try {
-                channel.basicNack(deliveryTag,false,false);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-            handleChartUpdateError(chart.getId(),"更新图表执行中状态失败");
-            return;
-        }
+        Chart chart = getChartWithRetry(message,channel,deliveryTag);
+        updateChartStatusWithRetry(chart.getId(), "running",channel,deliveryTag,"没什么用，就是用来区分不同的recover");
         //调用Ai
-        String result = aiManager.sendMsgToXingHuo(true, buildUserInput(chart));
+        String result = callAiWithRetry(chart,channel,deliveryTag);
         System.out.println("----Ai返回的结果是---"+result);
-        String[] splits = result.split("'-----'");
-        if (splits.length < 3){
-            try {
-                channel.basicNack(deliveryTag,false,false);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-            handleChartUpdateError(chart.getId(),"AI生成错误");
-            return;
-        }
-        String genChart = splits[1].trim();
-        System.out.println("----图表信息----");
-        System.out.println(genChart);
-        String genResult = splits[2].trim();
-        Chart updateChartResult = new Chart();
-        updateChartResult.setId(chart.getId());
-        updateChartResult.setGenResult(genResult);
-        updateChartResult.setGenChart(genChart);
-        updateChartResult.setStatus(CommonConstant.UPDATE_CHART_SUCCESS);
-        boolean updateResult = chartService.updateById(updateChartResult);
+        processAiResult(chart.getId(), result,channel,deliveryTag);
         //删除缓存
         deleteUserCache(ChartController.userId);
-        if (!updateResult) {
-            try {
-                channel.basicNack(deliveryTag,false,false);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-            handleChartUpdateError(chart.getId(),"更新图表成功状态失败");
-            return;
-        }
         //消息确认
         try {
             channel.basicAck(deliveryTag,false);
+        } catch (IOException e) {
+            rejectMessage(channel,deliveryTag);
+        }
+    }
+
+    private static void rejectMessage(Channel channel, long deliveryTag) {
+        try {
+            channel.basicNack(deliveryTag,false,false);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
 
+
+    @Retryable(value = Exception.class, maxAttempts = 3, backoff = @Backoff(delay = 1000, multiplier = 2))
+    public Chart getChartWithRetry(String chartId,Channel channel, long deliveryTag) {
+        Chart chart = chartService.getById(chartId);
+        if (chart == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR,"图表为空");
+        }
+        return chart;
+    }
+
+    @Retryable(value = Exception.class, maxAttempts = 3, backoff = @Backoff(delay = 1000, multiplier = 2))
+    public void updateChartStatusWithRetry(long chartId, String status,Channel channel, long deliveryTag,String sign) {
+        Chart updateChart = new Chart();
+        updateChart.setId(chartId);
+        updateChart.setStatus(status);
+        if (!chartService.updateById(updateChart)) {
+            handleChartUpdateError(chartId,"更新图表执行中状态失败");
+        }
+    }
+
+    @Retryable(value = Exception.class, maxAttempts = 3, backoff = @Backoff(delay = 1000, multiplier = 2))
+    public String callAiWithRetry(Chart chart,Channel channel, long deliveryTag) {
+        return aiManager.sendMsgToXingHuo(true, buildUserInput(chart));
+    }
+
+    @Retryable(value = Exception.class, maxAttempts = 3, backoff = @Backoff(delay = 1000, multiplier = 2))
+    public void processAiResult(long chartId, String result,Channel channel, long deliveryTag) {
+        String[] splits = result.split("'-----'");
+        if (splits.length < 3) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "AI生成错误");
+        }
+        Chart updateChart = new Chart();
+        updateChart.setId(chartId);
+        updateChart.setGenResult(splits[2].trim());
+        updateChart.setGenChart(splits[1].trim());
+        updateChart.setStatus(CommonConstant.UPDATE_CHART_SUCCESS);
+        if (!chartService.updateById(updateChart)) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "更新图表成功状态失败");
+        }
+    }
+
+    @Recover
+    public Chart handleRetriesExceeded(Exception e, String chartId,Channel channel, long deliveryTag) {
+        rejectMessage(channel,deliveryTag);
+        throw new BusinessException(ErrorCode.NOT_FOUND_ERROR,"图表为空");
+    }
+    @Recover
+    public void handleRetriesExceeded(Exception e, long chartId, String status,Channel channel, long deliveryTag,String sign) {
+        rejectMessage(channel,deliveryTag);
+        handleChartUpdateError(chartId,"更新图表执行中状态失败");
+    }
+    @Recover
+    public String handleRetriesExceeded(Exception e, Chart chart,Channel channel, long deliveryTag) {
+        rejectMessage(channel,deliveryTag);
+        handleChartUpdateError(chart.getId(),"AI出现异常");
+        return null;
+    }
+    @Recover
+    public void handleRetriesExceeded(Exception e, long chartId, String result,Channel channel, long deliveryTag) {
+        rejectMessage(channel,deliveryTag);
+        handleChartUpdateError(chartId,"AI生成错误");
+    }
     @RabbitListener(queues = {BiMqConstant.BI_DEAD_QUEUE_NAME},ackMode = "MANUAL")
     public void receiveDeadMessage(String message, Channel channel,@Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag){
         try {

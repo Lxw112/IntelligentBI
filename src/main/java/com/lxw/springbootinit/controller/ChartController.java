@@ -8,7 +8,6 @@ import cn.hutool.json.JSONUtil;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.google.gson.Gson;
 
 import com.lxw.springbootinit.annotation.AuthCheck;
 import com.lxw.springbootinit.bizmq.BiMessageProducer;
@@ -17,7 +16,6 @@ import com.lxw.springbootinit.common.DeleteRequest;
 import com.lxw.springbootinit.common.ErrorCode;
 import com.lxw.springbootinit.common.ResultUtils;
 import com.lxw.springbootinit.constant.CommonConstant;
-import com.lxw.springbootinit.constant.FileConstant;
 import com.lxw.springbootinit.constant.RedisConstants;
 import com.lxw.springbootinit.constant.UserConstant;
 import com.lxw.springbootinit.exception.BusinessException;
@@ -25,10 +23,8 @@ import com.lxw.springbootinit.exception.ThrowUtils;
 import com.lxw.springbootinit.manager.AiManager;
 import com.lxw.springbootinit.manager.RedisLimiterManager;
 import com.lxw.springbootinit.model.dto.chart.*;
-import com.lxw.springbootinit.model.dto.file.UploadFileRequest;
 import com.lxw.springbootinit.model.entity.Chart;
 import com.lxw.springbootinit.model.entity.User;
-import com.lxw.springbootinit.model.enums.FileUploadBizEnum;
 import com.lxw.springbootinit.model.vo.BiResponse;
 import com.lxw.springbootinit.service.ChartService;
 import com.lxw.springbootinit.service.UserService;
@@ -36,10 +32,8 @@ import com.lxw.springbootinit.utils.ExcelUtils;
 import com.lxw.springbootinit.utils.SqlUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
 
-import org.apache.commons.lang3.ThreadUtils;
 import org.springframework.beans.BeanUtils;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisCallback;
@@ -226,20 +220,22 @@ public class ChartController {
         ThrowUtils.throwIf(size > 20, ErrorCode.PARAMS_ERROR);
         //生成redis缓存key
         String cacheKey = RedisConstants.CACHE_CHARTS + loginUser.getId() + RedisConstants.CACHE_PAGE + current + RedisConstants.CACHE_SIZE + size;
-        //尝试从redis缓存中获取数据
-        String cachedData = stringRedisTemplate.opsForValue().get(cacheKey);
-        //如果缓存中有数据，直接返回
-        if (cachedData != null) {
-            // 将缓存的 JSON 字符串反序列化为 Page<Chart> 对象
-            Page<Chart> chartPage = JSONUtil.toBean(cachedData, new TypeReference<>() {},false);
-            log.info("从缓存中查到的，{}",chartPage);
-            return ResultUtils.success(chartPage);
+        //判断是否是通过表名搜索
+        if (chartQueryRequest.getName() == null || chartQueryRequest.getName().isEmpty()){
+            //尝试从redis缓存中获取数据
+            String cachedData = stringRedisTemplate.opsForValue().get(cacheKey);
+            //如果缓存中有数据，直接返回
+            if (cachedData != null) {
+                // 将缓存的 JSON 字符串反序列化为 Page<Chart> 对象
+                Page<Chart> chartPage = JSONUtil.toBean(cachedData, new TypeReference<Page<Chart>>() {},false);
+                //log.info("从缓存中查到的，{}",chartPage);
+                return ResultUtils.success(chartPage);
+            }
         }
         Page<Chart> chartPage = chartService.page(new Page<>(current, size),
                 getQueryWrapper(chartQueryRequest));
         // 将查询结果存入缓存，缓存时间可以根据需求设置
         stringRedisTemplate.opsForValue().set(cacheKey, JSONUtil.toJsonStr(chartPage), 30, TimeUnit.MINUTES);
-
         return ResultUtils.success(chartPage);
     }
 
@@ -588,6 +584,7 @@ public class ChartController {
     public void deleteUserCache(String userId) {
         String keyPattern = RedisConstants.CACHE_CHARTS + userId + "*";
         // 使用 scan 获取匹配的 keys
+        System.out.println("----------------stringRedisTemplate现在是-------------" + stringRedisTemplate);
         Set<String> keys = stringRedisTemplate.execute((RedisCallback<Set<String>>) connection -> {
             Set<String> matchingKeys = new HashSet<>();
             Cursor<byte[]> cursor = connection.scan(
