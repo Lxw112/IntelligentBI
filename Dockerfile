@@ -5,7 +5,7 @@ FROM maven:3.8.1-jdk-8-slim as builder
 WORKDIR /app
 COPY pom.xml .
 COPY src ./src
-COPY /target/lxwBi-backend-0.0.1-SNAPSHOT.jar .
+COPY lxwBi-backend-0.0.1-SNAPSHOT.jar .
 
 
 # Run the web service on container startup.
